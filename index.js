@@ -4,8 +4,19 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
+const http = require('http');
+const { Server } = require('socket.io');
 
 const app = express();
+const server = http.createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
+
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
@@ -35,9 +46,23 @@ const verificarToken = (req, res, next) => {
   }
 };
 
+// Socket.io
+io.on('connection', (socket) => {
+  console.log('✅ Cliente conectado:', socket.id);
+  
+  socket.on('join-empresa', (empresaId) => {
+    socket.join(`empresa-${empresaId}`);
+    console.log(`Socket ${socket.id} unido a empresa-${empresaId}`);
+  });
+  
+  socket.on('disconnect', () => {
+    console.log('❌ Cliente desconectado:', socket.id);
+  });
+});
+
 // Health Check
 app.get('/', (req, res) => {
-  res.json({ status: 'ok', mensaje: 'FactuFácil API v2.0', version: '2.0.0' });
+  res.json({ status: 'ok', mensaje: 'FactuFácil API v2.0 con Socket.io', version: '2.0.1' });
 });
 
 // Setup inicial
@@ -93,7 +118,6 @@ app.post('/api/auth/login-usuario', async (req, res) => {
     const passwordValido = await bcrypt.compare(password, usuario.password);
     if (!passwordValido) return res.status(401).json({ success: false, mensaje: 'Credenciales inválidas' });
     
-    // Obtener razones sociales del cliente
     const [razones] = await pool.query('SELECT * FROM clientes_razones WHERE usuario_id = ?', [usuario.id]);
     
     const token = jwt.sign({ id: usuario.id, uuid: usuario.uuid, email: usuario.email, tipo: 'cliente' }, JWT_SECRET, { expiresIn: '7d' });
@@ -174,13 +198,11 @@ app.post('/api/auth/registro', async (req, res) => {
       return res.status(400).json({ success: false, mensaje: 'Campos obligatorios faltantes' });
     }
     
-    // Verificar email duplicado
     const [existeEmail] = await pool.query('SELECT id FROM usuarios WHERE email = ?', [email.toLowerCase()]);
     if (existeEmail.length > 0) {
       return res.status(400).json({ success: false, mensaje: 'Este correo ya está registrado' });
     }
     
-    // Verificar RFC duplicado en razones
     const [existeRfc] = await pool.query('SELECT id FROM clientes_razones WHERE rfc = ?', [rfc.toUpperCase()]);
     if (existeRfc.length > 0) {
       return res.status(400).json({ success: false, mensaje: 'Este RFC ya está registrado' });
@@ -189,7 +211,6 @@ app.post('/api/auth/registro', async (req, res) => {
     const uuid = uuidv4();
     const passwordHash = await bcrypt.hash(password, 10);
     
-    // Crear usuario
     const [resultado] = await pool.query(`
       INSERT INTO usuarios (uuid, nombre, email, password, csf)
       VALUES (?, ?, ?, ?, ?)
@@ -197,7 +218,6 @@ app.post('/api/auth/registro', async (req, res) => {
     
     const usuarioId = resultado.insertId;
     
-    // Crear primera razón social
     await pool.query(`
       INSERT INTO clientes_razones (usuario_id, rfc, razon, regimen, cp, uso_cfdi, csf, predeterminada)
       VALUES (?, ?, ?, ?, ?, ?, ?, 1)
@@ -210,7 +230,7 @@ app.post('/api/auth/registro', async (req, res) => {
   }
 });
 
-// Obtener razones sociales del cliente
+// Razones sociales
 app.get('/api/clientes/razones', verificarToken, async (req, res) => {
   try {
     const [razones] = await pool.query('SELECT * FROM clientes_razones WHERE usuario_id = ?', [req.usuario.id]);
@@ -220,12 +240,10 @@ app.get('/api/clientes/razones', verificarToken, async (req, res) => {
   }
 });
 
-// Agregar razón social
 app.post('/api/clientes/razones', verificarToken, async (req, res) => {
   try {
     const { rfc, razon, regimen, cp, uso_cfdi, csf } = req.body;
     
-    // Verificar RFC duplicado
     const [existeRfc] = await pool.query('SELECT id FROM clientes_razones WHERE rfc = ?', [rfc.toUpperCase()]);
     if (existeRfc.length > 0) {
       return res.status(400).json({ success: false, mensaje: 'Este RFC ya está registrado' });
@@ -242,7 +260,6 @@ app.post('/api/clientes/razones', verificarToken, async (req, res) => {
   }
 });
 
-// Actualizar razón social
 app.put('/api/clientes/razones/:id', verificarToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -259,12 +276,10 @@ app.put('/api/clientes/razones/:id', verificarToken, async (req, res) => {
   }
 });
 
-// Eliminar razón social
 app.delete('/api/clientes/razones/:id', verificarToken, async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Verificar que no sea la única
     const [count] = await pool.query('SELECT COUNT(*) as total FROM clientes_razones WHERE usuario_id = ?', [req.usuario.id]);
     if (count[0].total <= 1) {
       return res.status(400).json({ success: false, mensaje: 'Debes tener al menos una razón social' });
@@ -277,7 +292,6 @@ app.delete('/api/clientes/razones/:id', verificarToken, async (req, res) => {
   }
 });
 
-// Establecer razón predeterminada
 app.put('/api/clientes/razones/:id/predeterminada', verificarToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -289,7 +303,6 @@ app.put('/api/clientes/razones/:id/predeterminada', verificarToken, async (req, 
   }
 });
 
-// Actualizar perfil cliente
 app.put('/api/clientes/perfil', verificarToken, async (req, res) => {
   try {
     const { nombre, password, csf } = req.body;
@@ -332,7 +345,6 @@ app.put('/api/clientes/perfil', verificarToken, async (req, res) => {
   }
 });
 
-// Dashboard cliente
 app.get('/api/clientes/dashboard', verificarToken, async (req, res) => {
   try {
     const [razones] = await pool.query('SELECT id FROM clientes_razones WHERE usuario_id = ?', [req.usuario.id]);
@@ -384,7 +396,6 @@ app.get('/api/clientes/dashboard', verificarToken, async (req, res) => {
   }
 });
 
-// Buscar RFC
 app.get('/api/rfc/:rfc', async (req, res) => {
   try {
     const rfc = req.params.rfc.toUpperCase();
@@ -413,7 +424,7 @@ app.get('/api/rfc/:rfc', async (req, res) => {
   }
 });
 
-// Crear Solicitud
+// Crear Solicitud CON SOCKET.IO
 app.post('/api/solicitudes', async (req, res) => {
   try {
     const { empresa_id, razon_id, rfc, razon, regimen, cp, uso_cfdi, email, monto, folio, notas, ticket, csf } = req.body;
@@ -422,7 +433,7 @@ app.post('/api/solicitudes', async (req, res) => {
       return res.status(400).json({ success: false, mensaje: 'Campos obligatorios faltantes' });
     }
     
-    const [empresas] = await pool.query('SELECT id FROM empresas WHERE codigo = ?', [empresa_id]);
+    const [empresas] = await pool.query('SELECT id, nombre FROM empresas WHERE codigo = ?', [empresa_id]);
     if (empresas.length === 0) {
       return res.status(400).json({ success: false, mensaje: 'Empresa no encontrada' });
     }
@@ -434,13 +445,22 @@ app.post('/api/solicitudes', async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pendiente')
     `, [uuid, empresas[0].id, razon_id || null, rfc.toUpperCase(), razon, regimen, cp, uso_cfdi, email.toLowerCase(), monto || null, folio, notas, ticket, csf]);
     
+    // EMITIR EVENTO SOCKET.IO
+    io.to(`empresa-${empresas[0].id}`).emit('nueva-solicitud', {
+      uuid,
+      rfc,
+      razon,
+      monto,
+      fecha: new Date(),
+      empresaNombre: empresas[0].nombre
+    });
+    
     res.json({ success: true, mensaje: 'Solicitud creada correctamente', uuid });
   } catch (error) {
     res.status(500).json({ success: false, mensaje: 'Error del servidor' });
   }
 });
 
-// Solicitudes de empresa
 app.get('/api/solicitudes/empresa/:empresaId', verificarToken, async (req, res) => {
   try {
     let empresaIdNum = req.params.empresaId;
@@ -468,7 +488,6 @@ app.get('/api/solicitudes/empresa/:empresaId', verificarToken, async (req, res) 
   }
 });
 
-// Mis solicitudes (cliente)
 app.get('/api/solicitudes/mis', verificarToken, async (req, res) => {
   try {
     const [razones] = await pool.query('SELECT id FROM clientes_razones WHERE usuario_id = ?', [req.usuario.id]);
@@ -501,7 +520,6 @@ app.get('/api/solicitudes/mis', verificarToken, async (req, res) => {
   }
 });
 
-// Detalle solicitud
 app.get('/api/solicitudes/:uuid', verificarToken, async (req, res) => {
   try {
     const [solicitudes] = await pool.query(`
@@ -530,7 +548,6 @@ app.get('/api/solicitudes/:uuid', verificarToken, async (req, res) => {
   }
 });
 
-// Actualizar estatus solicitud
 app.put('/api/solicitudes/:uuid/estatus', verificarToken, async (req, res) => {
   try {
     const { estatus } = req.body;
@@ -544,7 +561,6 @@ app.put('/api/solicitudes/:uuid/estatus', verificarToken, async (req, res) => {
   }
 });
 
-// Usuarios empresa
 app.get('/api/usuarios-empresa/:empresaId', verificarToken, async (req, res) => {
   try {
     let empresaIdNum = req.params.empresaId;
@@ -565,7 +581,6 @@ app.get('/api/usuarios-empresa/:empresaId', verificarToken, async (req, res) => 
   }
 });
 
-// Crear usuario empresa
 app.post('/api/usuarios-empresa', verificarToken, async (req, res) => {
   try {
     const { empresaId, usuario, nombre, email, password, permisos, estado, admin } = req.body;
@@ -580,13 +595,11 @@ app.post('/api/usuarios-empresa', verificarToken, async (req, res) => {
       empresaIdNum = empresas[0].id;
     }
     
-    // Verificar usuario duplicado
     const [existeUsuario] = await pool.query('SELECT id FROM usuarios_empresa WHERE usuario = ?', [usuario]);
     if (existeUsuario.length > 0) {
       return res.status(400).json({ success: false, mensaje: 'Este usuario ya existe' });
     }
     
-    // Verificar email duplicado
     if (email) {
       const [existeEmail] = await pool.query('SELECT id FROM usuarios_empresa WHERE email = ? AND empresa_id = ?', [email, empresaIdNum]);
       if (existeEmail.length > 0) {
@@ -606,7 +619,6 @@ app.post('/api/usuarios-empresa', verificarToken, async (req, res) => {
   }
 });
 
-// Actualizar usuario empresa
 app.put('/api/usuarios-empresa/:id', verificarToken, async (req, res) => {
   try {
     const { nombre, email, password, permisos, estado, admin } = req.body;
@@ -629,7 +641,6 @@ app.put('/api/usuarios-empresa/:id', verificarToken, async (req, res) => {
   }
 });
 
-// Eliminar usuario empresa
 app.delete('/api/usuarios-empresa/:id', verificarToken, async (req, res) => {
   try {
     await pool.query('DELETE FROM usuarios_empresa WHERE id = ?', [req.params.id]);
@@ -640,4 +651,4 @@ app.delete('/api/usuarios-empresa/:id', verificarToken, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 FactuFácil API v2.0 en puerto ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 FactuFácil API v2.0.1 con Socket.io en puerto ${PORT}`));
