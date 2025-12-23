@@ -63,10 +63,8 @@ app.post('/api/setup/usuario-empresa', async (req, res) => {
     
     const empresaIdNum = empresas[0].id;
     
-    // Verificar si ya existe
     const [existe] = await pool.query('SELECT id FROM usuarios_empresa WHERE usuario = ?', [usuario]);
     if (existe.length > 0) {
-      // Actualizar password
       const passwordHash = await bcrypt.hash(password, 10);
       await pool.query('UPDATE usuarios_empresa SET password = ? WHERE usuario = ?', [passwordHash, usuario]);
       return res.json({ success: true, mensaje: 'Password actualizado' });
@@ -165,8 +163,6 @@ app.post('/api/auth/login-empresa', async (req, res) => {
   try {
     const { usuario, password } = req.body;
     
-    console.log('Login empresa intento:', usuario);
-    
     if (!usuario || !password) {
       return res.status(400).json({ success: false, mensaje: 'Usuario y contraseña requeridos' });
     }
@@ -178,23 +174,18 @@ app.post('/api/auth/login-empresa', async (req, res) => {
       WHERE ue.usuario = ? AND e.estatus = 'activo'
     `, [usuario]);
     
-    console.log('Usuarios encontrados:', usuarios.length);
-    
     if (usuarios.length === 0) {
       return res.status(401).json({ success: false, mensaje: 'Usuario no encontrado' });
     }
     
     const user = usuarios[0];
     
-    console.log('Estado usuario:', user.estado);
-    
-    if (user.estado !== 'activo') {
+    // Comparar estado ignorando mayúsculas/minúsculas
+    if (user.estado.toLowerCase() !== 'activo') {
       return res.status(401).json({ success: false, mensaje: 'Usuario inactivo' });
     }
     
     const passwordValido = await bcrypt.compare(password, user.password);
-    
-    console.log('Password válido:', passwordValido);
     
     if (!passwordValido) {
       return res.status(401).json({ success: false, mensaje: 'Contraseña incorrecta' });
