@@ -50,6 +50,43 @@ app.get('/', (req, res) => {
 });
 
 // ============================================
+// RUTA: Setup inicial (para crear primer usuario)
+// ============================================
+app.post('/api/setup/usuario-empresa', async (req, res) => {
+  try {
+    const { empresaId, usuario, nombre, email, password, permisos, admin } = req.body;
+    
+    const [empresas] = await pool.query('SELECT id FROM empresas WHERE codigo = ?', [empresaId]);
+    if (empresas.length === 0) {
+      return res.status(400).json({ success: false, mensaje: 'Empresa no encontrada' });
+    }
+    
+    const empresaIdNum = empresas[0].id;
+    
+    // Verificar si ya existe
+    const [existe] = await pool.query('SELECT id FROM usuarios_empresa WHERE usuario = ?', [usuario]);
+    if (existe.length > 0) {
+      // Actualizar password
+      const passwordHash = await bcrypt.hash(password, 10);
+      await pool.query('UPDATE usuarios_empresa SET password = ? WHERE usuario = ?', [passwordHash, usuario]);
+      return res.json({ success: true, mensaje: 'Password actualizado' });
+    }
+    
+    const passwordHash = await bcrypt.hash(password, 10);
+    
+    await pool.query(`
+      INSERT INTO usuarios_empresa (empresa_id, usuario, password, nombre, email, permisos, estado, admin)
+      VALUES (?, ?, ?, ?, ?, ?, 'activo', ?)
+    `, [empresaIdNum, usuario, passwordHash, nombre, email, permisos || 'gestionar', admin === 'Si' ? 1 : 0]);
+    
+    res.json({ success: true, mensaje: 'Usuario creado correctamente' });
+  } catch (error) {
+    console.error('Error setup:', error);
+    res.status(500).json({ success: false, mensaje: error.message });
+  }
+});
+
+// ============================================
 // RUTA: Obtener Catálogos
 // ============================================
 app.get('/api/catalogos', async (req, res) => {
@@ -128,6 +165,8 @@ app.post('/api/auth/login-empresa', async (req, res) => {
   try {
     const { usuario, password } = req.body;
     
+    console.log('Login empresa intento:', usuario);
+    
     if (!usuario || !password) {
       return res.status(400).json({ success: false, mensaje: 'Usuario y contraseña requeridos' });
     }
@@ -136,18 +175,29 @@ app.post('/api/auth/login-empresa', async (req, res) => {
       SELECT ue.*, e.nombre as empresa_nombre, e.codigo as empresa_codigo
       FROM usuarios_empresa ue
       JOIN empresas e ON ue.empresa_id = e.id
-      WHERE ue.usuario = ? AND ue.estado = 'activo' AND e.estatus = 'activo'
+      WHERE ue.usuario = ? AND e.estatus = 'activo'
     `, [usuario]);
     
+    console.log('Usuarios encontrados:', usuarios.length);
+    
     if (usuarios.length === 0) {
-      return res.status(401).json({ success: false, mensaje: 'Credenciales inválidas' });
+      return res.status(401).json({ success: false, mensaje: 'Usuario no encontrado' });
     }
     
     const user = usuarios[0];
+    
+    console.log('Estado usuario:', user.estado);
+    
+    if (user.estado !== 'activo') {
+      return res.status(401).json({ success: false, mensaje: 'Usuario inactivo' });
+    }
+    
     const passwordValido = await bcrypt.compare(password, user.password);
     
+    console.log('Password válido:', passwordValido);
+    
     if (!passwordValido) {
-      return res.status(401).json({ success: false, mensaje: 'Credenciales inválidas' });
+      return res.status(401).json({ success: false, mensaje: 'Contraseña incorrecta' });
     }
     
     const token = jwt.sign(
@@ -191,7 +241,6 @@ app.post('/api/auth/registro', async (req, res) => {
       return res.status(400).json({ success: false, mensaje: 'Campos obligatorios faltantes' });
     }
     
-    // Verificar si ya existe
     const [existente] = await pool.query('SELECT id FROM usuarios WHERE email = ?', [email.toLowerCase()]);
     if (existente.length > 0) {
       return res.status(400).json({ success: false, mensaje: 'El email ya está registrado' });
@@ -219,7 +268,6 @@ app.get('/api/rfc/:rfc', async (req, res) => {
   try {
     const rfc = req.params.rfc.toUpperCase();
     
-    // Buscar en usuarios
     const [usuarios] = await pool.query('SELECT * FROM usuarios WHERE rfc = ?', [rfc]);
     
     if (usuarios.length > 0) {
@@ -236,7 +284,6 @@ app.get('/api/rfc/:rfc', async (req, res) => {
       });
     }
     
-    // Buscar en solicitudes anteriores
     const [solicitudes] = await pool.query('SELECT * FROM solicitudes WHERE rfc = ? ORDER BY fecha DESC LIMIT 1', [rfc]);
     
     if (solicitudes.length > 0) {
@@ -271,7 +318,6 @@ app.post('/api/solicitudes', async (req, res) => {
       return res.status(400).json({ success: false, mensaje: 'Campos obligatorios faltantes' });
     }
     
-    // Obtener empresa_id numérico desde código
     const [empresas] = await pool.query('SELECT id FROM empresas WHERE codigo = ?', [empresa_id]);
     if (empresas.length === 0) {
       return res.status(400).json({ success: false, mensaje: 'Empresa no encontrada' });
@@ -299,7 +345,6 @@ app.get('/api/solicitudes/empresa/:empresaId', verificarToken, async (req, res) 
   try {
     const empresaId = req.params.empresaId;
     
-    // Obtener id numérico si viene código
     let empresaIdNum = empresaId;
     if (isNaN(empresaId)) {
       const [empresas] = await pool.query('SELECT id FROM empresas WHERE codigo = ?', [empresaId]);
@@ -447,7 +492,6 @@ app.post('/api/usuarios-empresa', verificarToken, async (req, res) => {
       empresaIdNum = empresas[0].id;
     }
     
-    // Verificar si usuario ya existe
     const [existente] = await pool.query('SELECT id FROM usuarios_empresa WHERE usuario = ? AND empresa_id = ?', [usuario, empresaIdNum]);
     if (existente.length > 0) {
       return res.status(400).json({ success: false, mensaje: 'El usuario ya existe' });
@@ -535,7 +579,6 @@ app.put('/api/usuarios/:email', verificarToken, async (req, res) => {
     
     await pool.query(query, params);
     
-    // Obtener datos actualizados
     const [usuarios] = await pool.query('SELECT * FROM usuarios WHERE email = ?', [email.toLowerCase()]);
     
     res.json({
