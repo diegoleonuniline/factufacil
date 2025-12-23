@@ -26,6 +26,13 @@ const pool = mysql.createPool(dbConfig);
 const JWT_SECRET = 'factufacil_secret_key_2024_muy_segura';
 
 // ============================================
+// HELPER: Comparar estado (ignora mayúsculas)
+// ============================================
+const esActivo = (estado) => {
+  return estado && estado.toLowerCase() === 'activo';
+};
+
+// ============================================
 // MIDDLEWARE: Verificar Token
 // ============================================
 const verificarToken = (req, res, next) => {
@@ -74,7 +81,7 @@ app.post('/api/setup/usuario-empresa', async (req, res) => {
     
     await pool.query(`
       INSERT INTO usuarios_empresa (empresa_id, usuario, password, nombre, email, permisos, estado, admin)
-      VALUES (?, ?, ?, ?, ?, ?, 'activo', ?)
+      VALUES (?, ?, ?, ?, ?, ?, 'Activo', ?)
     `, [empresaIdNum, usuario, passwordHash, nombre, email, permisos || 'gestionar', admin === 'Si' ? 1 : 0]);
     
     res.json({ success: true, mensaje: 'Usuario creado correctamente' });
@@ -91,7 +98,11 @@ app.get('/api/catalogos', async (req, res) => {
   try {
     const [regimenes] = await pool.query('SELECT clave, descripcion FROM cat_regimen ORDER BY clave');
     const [usosCfdi] = await pool.query('SELECT clave, descripcion FROM cat_uso_cfdi ORDER BY clave');
-    const [empresas] = await pool.query('SELECT id, codigo, nombre FROM empresas WHERE estatus = "activo" ORDER BY nombre');
+    const [empresas] = await pool.query(`
+      SELECT id, codigo, nombre FROM empresas 
+      WHERE LOWER(estatus) = 'activo' 
+      ORDER BY nombre
+    `);
     
     res.json({
       success: true,
@@ -171,7 +182,7 @@ app.post('/api/auth/login-empresa', async (req, res) => {
       SELECT ue.*, e.nombre as empresa_nombre, e.codigo as empresa_codigo
       FROM usuarios_empresa ue
       JOIN empresas e ON ue.empresa_id = e.id
-      WHERE ue.usuario = ? AND e.estatus = 'activo'
+      WHERE ue.usuario = ? AND LOWER(e.estatus) = 'activo'
     `, [usuario]);
     
     if (usuarios.length === 0) {
@@ -180,8 +191,7 @@ app.post('/api/auth/login-empresa', async (req, res) => {
     
     const user = usuarios[0];
     
-    // Comparar estado ignorando mayúsculas/minúsculas
-    if (user.estado.toLowerCase() !== 'activo') {
+    if (!esActivo(user.estado)) {
       return res.status(401).json({ success: false, mensaje: 'Usuario inactivo' });
     }
     
@@ -490,11 +500,12 @@ app.post('/api/usuarios-empresa', verificarToken, async (req, res) => {
     
     const passwordHash = await bcrypt.hash(password, 10);
     const esAdmin = admin === 'Si' || admin === true ? 1 : 0;
+    const estadoFinal = estado || 'Activo';
     
     await pool.query(`
       INSERT INTO usuarios_empresa (empresa_id, usuario, password, nombre, email, permisos, estado, admin)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [empresaIdNum, usuario, passwordHash, nombre, email, permisos || 'lectura', estado || 'activo', esAdmin]);
+    `, [empresaIdNum, usuario, passwordHash, nombre, email, permisos || 'lectura', estadoFinal, esAdmin]);
     
     res.json({ success: true, mensaje: 'Usuario creado correctamente' });
   } catch (error) {
