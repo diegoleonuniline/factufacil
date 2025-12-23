@@ -1,7 +1,7 @@
 {
   "name": "factufacil-api",
-  "version": "1.0.0",
-  "description": "API REST para sistema de facturación SaaS",
+  "version": "2.0.1",
+  "description": "API REST para sistema de facturación SaaS con Socket.io",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -13,7 +13,8 @@
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
     "dotenv": "^16.3.1",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.1",
+    "socket.io": "^4.7.5"
   },
   "engines": {
     "node": "18.x"
