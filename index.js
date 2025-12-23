@@ -11,7 +11,7 @@ app.use(express.json({ limit: '50mb' }));
 
 // Configuración de la base de datos
 const dbConfig = {
-  host: 'srv1339.hstgr.io',
+  host: 'srv469.hstgr.io',
   user: 'u951308636_diego_leon',
   password: 'Le0n2018#',
   database: 'u951308636_factu_facil',
